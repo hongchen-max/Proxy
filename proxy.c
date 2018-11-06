@@ -1,5 +1,3 @@
-
-
 /*
  * tiny.c - A simple, iterative HTTP/1.0 Web server that uses the GET method
  * to serve static and dynamic content.
@@ -13,7 +11,6 @@
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
-
 
 
 void	doit      (int fd);
@@ -67,7 +64,7 @@ void doit(int fd)
 	/* Read request line and headers */
 	Rio_readinitb(&rio, fd);
 	if (!Rio_readlineb(&rio, buf, MAXLINE))
-			return;
+		return;
 	printf("%s", buf);
 	sscanf(buf, "%s %s %s", method, uri, version);
 	if (strcasecmp(method, "GET")) {
@@ -110,7 +107,6 @@ void doit(int fd)
 /*
  * read_requesthdrs - read HTTP request headers
  */
-/* $begin read_requesthdrs */
 void read_requesthdrs(rio_t * rp)
 {
 	char		buf       [MAXLINE];
