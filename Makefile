@@ -5,9 +5,9 @@
 # build your proxy from sources.
 #
 
-BYUNETID = NOBODY
+BYUNETID = pjohnst5
 VERSION = 1
-HANDINDIR = /users/faculty/snell/CS324/handin/Fall2017/ProxyLab1
+HANDINDIR = /users/faculty/snell/CS324/handin/Fall2018/ProxyLab1
 
 
 CC = gcc
