@@ -129,14 +129,39 @@ void doit(int fd)
 		strcat(rLine, "GET ");
 		strcat(rLine, path);
 		strcat(rLine, " HTTP/1.0\r\n");
+		strcat(finalRequest, rLine);
+		
+		//See if existingHdrs contains "\r\n", if so, strcat it to final
+		if (strstr(existingHdrs, "\r\n")) {
+			strcat(finalRequest, existingHdrs);	
+		}
+		
+		//Append host header if none
+		if(!hasHost){
+			strcat(finalRequest, "Host: ");
+			strcat(finalRequest, host);
+			strcat(finalRequest, "\r\n");
+		}
+
+		//Append user agent header if none
+		if(!hasUA) {
+			strcat(finalRequest, user_agent_hdr);
+		}
+
+		//Append connection header if none
+		if(!hasConn) {
+			strcat(finalRequest, "Connection: close\r\n");
+		}
+
+		//Append proxy connection header if none
+		if(!hasPro) {
+			strcat(finalRequest, "Proxy-Connection: close\r\n");
+		}
+		
+		//Append empty line
+		strcat(finalRequest, "\r\n");
 
 		printf("break\n");
-		//See if existingHdrs contains "\r\n", if so, strcat it to final
-		//Append host header if none
-		//Append user agent header if none
-		//Append connection header if none
-		//Append proxy connection header if none
-		
 
 		//call open_clientfd(hostname, port)
 
