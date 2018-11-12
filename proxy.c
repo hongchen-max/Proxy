@@ -88,22 +88,50 @@ void doit(int fd)
 				    "Proxy does not implement this method");
 		return;
 	}
+	
+	if(!strstr(version, "HTTP")){
+		clienterror(fd, version, "501", "bad version",
+					"Proxy does not implement that version");
+		return;
+	}
 
 	//Parse URI from GET request, get hostname, port, and path
 	if(parseURI(uri, host, &port, path)) {
-		printf("successfully parsed url\n");
+		printf("\nsuccessfully parsed url\n");
 		printf("host: %s\n", host);
 		printf("port: %d\n", port);
 		printf("path: %s\n", path);
-		
+
+		const char* ptr = strchr(host, '\0');
+		if(ptr){
+			printf("found o in host\n");
+			int index = ptr - host;
+			printf("index of o: %d\n", index);
+		}
+
+		const char* ptr2 = strchr(path, '\0');
+		if(ptr2){
+			printf("found o in path\n");
+			int index = ptr2 - path;
+			printf("index of o: %d\n", index);
+		} else{
+			printf("need to add 0 in path\n");
+		}	
+
 		//now read existing headers
 		//Tell me if there was already a host, ua, conn, proxy header
 		read_requesthdrs(&rio, existingHdrs, &hasHost, &hasUA, &hasConn,&hasPro);
-
+		printf("done reading headers\n");
+		
 		//start building request
 		//Write GET, path, and HTTP/1.0 /r/n
-		//See if existingHdrs contains 'nothing', if not, add it
-			//make sure they all end in /r/n
+		char rLine[MAXLINE];
+		strcat(rLine, "GET ");
+		strcat(rLine, path);
+		strcat(rLine, " HTTP/1.0\r\n");
+
+		printf("break\n");
+		//See if existingHdrs contains "\r\n", if so, strcat it to final
 		//Append host header if none
 		//Append user agent header if none
 		//Append connection header if none
@@ -208,19 +236,37 @@ int parseURI(char* uri, char* host, int* port, char* path){
 void read_requesthdrs(rio_t * rp, char* existingHdrs, int* hasHost,
 						int* hasUA, int* hasConn, int* hasPro)
 {
+	printf("\nReading headers...\n");
 	char buf[MAXLINE];
-
-	Rio_readlineb(rp, buf, MAXLINE);
-	printf("Read request headers buf: %s\n", buf);
+	
 	while (strcmp(buf, "\r\n"))
 	{
+		printf("in while\n");
 		Rio_readlineb(rp, buf, MAXLINE);
-		printf("line read in read request: %s\n", buf);
-		if(strstr(buf, "/r/n")){
-			printf("has rn\n");
+		printf("Header: %s\n", buf);
+		
+		if(strstr(buf, "Host")) {
+			*hasHost = 1;
+			printf("had host\n");
+		} else if (strstr(buf, "User-Agent")){
+			*hasUA = 1;
+			printf("had useragent\n");
+		} else if(strstr(buf, "Connection")){
+			*hasConn = 1;
+			printf("had connection\n");
+		} else if (strstr(buf, "Proxy-Connection")){
+			*hasPro = 1;
+			printf("had proxy connection\n");
+		}
+		
+		if(strstr(buf, "\r\n") == NULL){	
+			strcat(buf, "\r\n");
+		}
+		
+		if(strcmp(buf, "\r\n")){
+			strcat(existingHdrs, buf);
 		}
 	}
-	printf("buf after reading request headers: %s\n", buf);
 	return;
 }
 
