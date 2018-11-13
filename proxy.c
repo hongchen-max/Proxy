@@ -16,10 +16,12 @@ static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64;
 void doit      (int fd);
 void read_requesthdrs(rio_t * rp, char* existingHdrs, int* hasHost,
 						int* hasUA, int* hasConn, int* hasPro);
-int	parseURI  (char *uri, char *host, int* port, char *path);
+int	parseURI  (char *uri, char *host, char* port, char *path);
 void get_filetype(char *filename, char *filetype);
 void clienterror(int fd, char *cause, char *errnum,
 	    	char *shortmsg, char *longmsg);
+
+
 
 int main(int argc, char **argv)
 {
@@ -62,7 +64,8 @@ void doit(int fd)
 	char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
 	
 	char host[MAXLINE], path[MAXLINE];
-	int port = -1;
+	char port[6];
+	strcat(port, "80");
 	char existingHdrs[MAXLINE];
 	char finalRequest[MAXLINE];
 	int hasHost = 0;
@@ -96,87 +99,106 @@ void doit(int fd)
 	}
 
 	//Parse URI from GET request, get hostname, port, and path
-	if(parseURI(uri, host, &port, path)) {
-		printf("\nsuccessfully parsed url\n");
-		printf("host: %s\n", host);
-		printf("port: %d\n", port);
-		printf("path: %s\n", path);
-
-		const char* ptr = strchr(host, '\0');
-		if(ptr){
-			printf("found o in host\n");
-			int index = ptr - host;
-			printf("index of o: %d\n", index);
-		}
-
-		const char* ptr2 = strchr(path, '\0');
-		if(ptr2){
-			printf("found o in path\n");
-			int index = ptr2 - path;
-			printf("index of o: %d\n", index);
-		} else{
-			printf("need to add 0 in path\n");
-		}	
-
-		//now read existing headers
-		//Tell me if there was already a host, ua, conn, proxy header
-		read_requesthdrs(&rio, existingHdrs, &hasHost, &hasUA, &hasConn,&hasPro);
-		printf("done reading headers\n");
-		
-		//start building request
-		//Write GET, path, and HTTP/1.0 /r/n
-		char rLine[MAXLINE];
-		strcat(rLine, "GET ");
-		strcat(rLine, path);
-		strcat(rLine, " HTTP/1.0\r\n");
-		strcat(finalRequest, rLine);
-		
-		//See if existingHdrs contains "\r\n", if so, strcat it to final
-		if (strstr(existingHdrs, "\r\n")) {
-			strcat(finalRequest, existingHdrs);	
-		}
-		
-		//Append host header if none
-		if(!hasHost){
-			strcat(finalRequest, "Host: ");
-			strcat(finalRequest, host);
-			strcat(finalRequest, "\r\n");
-		}
-
-		//Append user agent header if none
-		if(!hasUA) {
-			strcat(finalRequest, user_agent_hdr);
-		}
-
-		//Append connection header if none
-		if(!hasConn) {
-			strcat(finalRequest, "Connection: close\r\n");
-		}
-
-		//Append proxy connection header if none
-		if(!hasPro) {
-			strcat(finalRequest, "Proxy-Connection: close\r\n");
-		}
-		
-		//Append empty line
-		strcat(finalRequest, "\r\n");
-
-		printf("break\n");
-
-		//call open_clientfd(hostname, port)
-
-	} else {
+	if(!parseURI(uri, host, port, path)) {
 		printf("bad url\n");
 		clienterror(fd, "bad url", "400", "bad url", "bad url");
 		return;
 	}
+	printf("\nsuccessfully parsed url\n");
+	printf("host: %s\n", host);
+	printf("port: %s\n", port);
+	printf("path: %s\n", path);
 
+
+	//now read existing headers
+	//Tell me if there was already a host, ua, conn, proxy header
+	read_requesthdrs(&rio, existingHdrs, &hasHost, &hasUA, &hasConn,&hasPro);
+	printf("done reading headers\n");
 	
+	//start building request
+	//Write GET, path, and HTTP/1.0 /r/n
+	char rLine[MAXLINE];
+	strcat(rLine, "GET ");
+	strcat(rLine, path);
+	strcat(rLine, " HTTP/1.0\r\n");
+	strcat(finalRequest, rLine);
+	
+	//See if existingHdrs contains "\r\n", if so, strcat it to final
+	if (strstr(existingHdrs, "\r\n")) {
+		strcat(finalRequest, existingHdrs);	
+	}
+	
+	//Append host header if none
+	if(!hasHost){
+		strcat(finalRequest, "Host: ");
+		strcat(finalRequest, host);
+		strcat(finalRequest, "\r\n");
+	}
 
-}
+	//Append user agent header if none
+	if(!hasUA) {
+		strcat(finalRequest, user_agent_hdr);
+	}
+
+	//Append connection header if none
+	if(!hasConn) {
+		strcat(finalRequest, "Connection: close\r\n");
+	}
+
+	//Append proxy connection header if none
+	if(!hasPro) {
+		strcat(finalRequest, "Proxy-Connection: close\r\n");
+	}
+	
+	//Append empty line
+	strcat(finalRequest, "\r\n");
+
+	//connect to server and write the bytes
+	int clientfd = Open_clientfd(host, port);
+	if(clientfd < 0){
+		clienterror(fd, "Bad request", "400", "Bad host or port",
+			"You done messed up a-aron");
+	}
+	Rio_readinitb(&rio, clientfd);
+	Rio_writen(clientfd, finalRequest, strlen(finalRequest));
+	
+	//receive bytes back
+	char rsp[MAXLINE];
+	char tmp[MAXLINE];
+	char tmpPrev[MAXLINE];
+	int endLineCnt = 0;
+	
+	do{
+		Rio_readlineb(&rio, tmp, MAXLINE);
+		
+		//If we see the same thing we saw before, break
+		if(strcmp(tmp, tmpPrev) == 0) {
+			break;
+		} 
+	
+		//concat line to response
+		strcat(rsp, tmp);
+
+		//Count the number of empty lines
+		if(strcmp(tmp, "\r\n") == 0) {
+			endLineCnt++;	
+		}
+		
+		strcpy(tmpPrev, tmp);
+	
+	} while(endLineCnt < 2 && strcmp(tmp, ""));
+	
+	Close(clientfd);
+	printf("break\n");
+
+	//send the response back to client
+	Rio_writen(fd, rsp, strlen(rsp));
+} 
+
+
 
 //returns 1 if parsed OK, 0 if failed
-int parseURI(char* uri, char* host, int* port, char* path){
+int parseURI(char* uri, char* host, char* port, char* path){
 	//try till slash with http
 	if(sscanf(uri, "http://%[^/]", host) == 0){
 		//try till slash no http
@@ -196,7 +218,8 @@ int parseURI(char* uri, char* host, int* port, char* path){
 		}
 		
 		colonIndex++;
-		char portS[6];
+		//char portS[6];
+		memset(port, 0, 6*(sizeof port[0]));
 		int digitCount = 0;
 		while(host[colonIndex] != '/'){
 			if(digitCount > 5){
@@ -205,7 +228,7 @@ int parseURI(char* uri, char* host, int* port, char* path){
 			if(colonIndex == strlen(host)){
 				break;
 			}
-			portS[digitCount] = host[colonIndex];
+			port[digitCount] = host[colonIndex];
 			digitCount++;
 			colonIndex++;
 		}
@@ -214,13 +237,8 @@ int parseURI(char* uri, char* host, int* port, char* path){
 			sscanf(uri, "%[^:]", host);
 		}
 
-		*port = atoi(portS);
-		if (*port == 0){
-			return 0;
-		}
-
 		//path time
-		int start = strlen(host) + strlen(portS) + 1;
+		int start = strlen(host) + strlen(port) + 1;
 		if(strstr(uri, "http://")){
 			start = start + 7;
 		}
