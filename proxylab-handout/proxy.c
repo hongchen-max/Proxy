@@ -66,9 +66,14 @@ void sigint_handler(int sig) {
 
 	//deinitialize logging queue
 	lbuf_deinit(&logQueue);
-	
+
+	fprintf(fp,"done\n");
 	//close the file descriptor
 	fclose(fp);
+
+	FILE *why = fopen("./why.txt", "w+");
+	setbuf(why, NULL);
+	fprintf(why, "WHAT\n");
 	exit(1);
 }
 
@@ -79,6 +84,9 @@ int main(int argc, char **argv)
 	socklen_t	clientlen;
 	struct sockaddr_storage clientaddr;
 
+	//install sigint handler
+	Signal(SIGINT, sigint_handler);
+	
 	/* Check command line args */
 	if (argc != 2)
 	{
@@ -103,6 +111,8 @@ int main(int argc, char **argv)
 
 	//Open the file to write to
 	fp = fopen("./log.txt", "w+"); 
+	setbuf(fp, NULL);
+	fprintf(fp, "Start\n");
 
 	//Opens a server on port argv[1]
 	listenfd = Open_listenfd(argv[1]);
