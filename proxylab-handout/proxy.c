@@ -7,6 +7,7 @@
 #define MAX_OBJECT_SIZE 102400
 
 #include "sbuf.h"
+#include "lbuf.h"
 #include <stdio.h>
 
 /* You won't lose style points for including this long line in your code */
@@ -20,6 +21,8 @@ static const int nInQ = 2;
 //Log queue, will have nInQ size
 static lbuf_t logQueue;
 
+//file to write to
+FILE* fp;
 
 void doit(int fd);
 void read_requesthdrs(rio_t * rp, char* existingHdrs, int* hasHost,
@@ -42,17 +45,32 @@ void* thread(void* vargp) {
 }
 
 //Logging thread
-void* log(void* vargp) {
+void* logThread(void* vargp) {
 	Pthread_detach(pthread_self());
 	while(1) {
 		//get the latest message
-		
-		//write it to a file
+		char *message = lbuf_remove(&logQueue);
+			
+		//write it to a file	
+		fprintf(fp, "%s\n", message);
 
+		//free the message you got
+		Free(message);
 	}
 }
 
+//sigint handler
+void sigint_handler(int sig) {
+	//deinitializes queue
+	sbuf_deinit(&queue);
 
+	//deinitialize logging queue
+	lbuf_deinit(&logQueue);
+	
+	//close the file descriptor
+	fclose(fp);
+	exit(1);
+}
 
 int main(int argc, char **argv)
 {
@@ -81,8 +99,11 @@ int main(int argc, char **argv)
 	lbuf_init(&logQueue, nInQ);
 
 	//Make the logging thread
-	Pthread_create(&tid, NULL, log, NULL);
-	
+	Pthread_create(&tid, NULL, logThread, NULL);
+
+	//Open the file to write to
+	fp = fopen("./log.txt", "w+"); 
+
 	//Opens a server on port argv[1]
 	listenfd = Open_listenfd(argv[1]);
 	printf("Proxy listening on port %s\n", argv[1]);
@@ -102,8 +123,6 @@ int main(int argc, char **argv)
 		sbuf_insert(&queue, connfd);	
 	}
 
-	//deinitializes queue
-	sbuf_deinit(&queue);
 }
 
 /*
@@ -171,7 +190,18 @@ void doit(int fd)
 	printf("path: %s\n", path);
 
 	//log the threadid and message
+	char message[MAXLINE];
+	memset(message, 0, MAXLINE);
 	
+	strcat(message, "Thread handled: ");
+	strcat(message, host);
+	strcat(message, " ");
+	strcat(message, port);
+	strcat(message, " ");
+	strcat(message, path);
+	strcat(message, "\n");
+
+	lbuf_insert(&logQueue, message);		
 	
 
 	//now read existing headers
