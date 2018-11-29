@@ -6,14 +6,21 @@
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
 
-#include "csapp.h"
+#include "sbuf.h"
 #include <stdio.h>
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
 
-void doit      (int fd);
+//sbuf stuff
+static sbuf_t queue;
+static const int nInQ = 2;
+
+//logging mutex
+sem_t logging;
+
+void doit(int fd);
 void read_requesthdrs(rio_t * rp, char* existingHdrs, int* hasHost,
 						int* hasUA, int* hasConn, int* hasPro);
 int	parseURI  (char *uri, char *host, char* port, char *path);
@@ -22,10 +29,21 @@ void clienterror(int fd, char *cause, char *errnum,
 	    	char *shortmsg, char *longmsg);
 
 
+void* thread(void* vargp) {
+	Pthread_detach(pthread_self());
+	while(1) {
+		//get connfd from queue
+		int connfd = sbuf_remove(&queue);
+		doit(connfd);
+		Close(connfd);
+	}
+	return NULL;
+}
+
 
 int main(int argc, char **argv)
 {
-	int		listenfd  , connfd;
+	int		listenfd;
 	char		hostname  [MAXLINE], port[MAXLINE];
 	socklen_t	clientlen;
 	struct sockaddr_storage clientaddr;
@@ -36,6 +54,20 @@ int main(int argc, char **argv)
 		fprintf(stderr, "usage: %s <port>\n", argv[0]);
 		exit(1);
 	}
+
+
+	//Initialize the queue
+	sbuf_init(&queue, nInQ);
+
+	//Initialize logging mutex
+	Sem_init(&logging, 0, 1);
+	
+	//Make the thread pool
+	pthread_t tid;
+	for (int i = 0; i < nInQ; i++) {
+		Pthread_create(&tid, NULL, thread, NULL);
+	}
+
 	
 	//Opens a server on port argv[1]
 	listenfd = Open_listenfd(argv[1]);
@@ -45,15 +77,19 @@ int main(int argc, char **argv)
 	{
 		clientlen = sizeof(clientaddr);
 		//connfd can now be used to communicate with client
-		connfd = Accept(listenfd, (SA *) & clientaddr, &clientlen);
+		int connfd = Accept(listenfd, (SA *) & clientaddr, &clientlen);
 
 		Getnameinfo((SA *) & clientaddr, clientlen, hostname, MAXLINE,
 				    port, MAXLINE, 0);
 		
 		printf("Accepted connection from (%s, %s)\n", hostname, port);
-		doit(connfd);
-		Close(connfd);
+		
+		//Put the connfd on the queue
+		sbuf_insert(&queue, connfd);	
 	}
+
+	//deinitializes queue
+	sbuf_deinit(&queue);
 }
 
 /*
@@ -65,7 +101,6 @@ void doit(int fd)
 	
 	char host[MAXLINE], path[MAXLINE];
 	char port[6];
-	strcat(port, "80");
 	char existingHdrs[MAXLINE];
 	char finalRequest[MAXLINE];
 	int hasHost = 0;
@@ -73,6 +108,17 @@ void doit(int fd)
 	int hasConn = 0;
 	int hasPro = 0;
 	
+	memset(buf, 0, MAXLINE);
+	memset(method, 0, MAXLINE);
+	memset(uri, 0, MAXLINE);
+	memset(version, 0, MAXLINE);
+	memset(host, 0, MAXLINE);
+	memset(path, 0, MAXLINE);
+	memset(port, 0, 6);
+	memset(existingHdrs, 0, MAXLINE);
+	memset(finalRequest, 0, MAXLINE);
+	
+	strcat(port, "80");
 	rio_t	rio;
 
 	/* Read request line and headers */
@@ -118,6 +164,8 @@ void doit(int fd)
 	//start building request
 	//Write GET, path, and HTTP/1.0 /r/n
 	char rLine[MAXLINE];
+	memset(rLine, 0, MAXLINE);
+
 	strcat(rLine, "GET ");
 	strcat(rLine, path);
 	strcat(rLine, " HTTP/1.0\r\n");
@@ -154,45 +202,29 @@ void doit(int fd)
 	strcat(finalRequest, "\r\n");
 
 	//connect to server and write the bytes
-	int clientfd = Open_clientfd(host, port);
+	int clientfd = open_clientfd(host, port);
 	if(clientfd < 0){
 		clienterror(fd, "Bad request", "400", "Bad host or port",
 			"You done messed up a-aron");
+			return;
 	}
 	Rio_readinitb(&rio, clientfd);
 	Rio_writen(clientfd, finalRequest, strlen(finalRequest));
 	
+
 	//receive bytes back
-	char rsp[MAXLINE];
 	char tmp[MAXLINE];
-	char tmpPrev[MAXLINE];
-	int endLineCnt = 0;
+	memset(tmp, 0, MAXLINE);
 	
-	do{
-		Rio_readlineb(&rio, tmp, MAXLINE);
-		
-		//If we see the same thing we saw before, break
-		if(strcmp(tmp, tmpPrev) == 0) {
-			break;
-		} 
-	
+	int i = 0;
+	while((i = Rio_readnb(&rio, tmp, MAXLINE)) > 0) {
 		//concat line to response
-		strcat(rsp, tmp);
-
-		//Count the number of empty lines
-		if(strcmp(tmp, "\r\n") == 0) {
-			endLineCnt++;	
-		}
+		//strcat(rsp, tmp);
+		Rio_writen(fd, tmp, i);
+	}				
 		
-		strcpy(tmpPrev, tmp);
-	
-	} while(endLineCnt < 2 && strcmp(tmp, ""));
-	
 	Close(clientfd);
-	printf("break\n");
-
-	//send the response back to client
-	Rio_writen(fd, rsp, strlen(rsp));
+	printf("awaiting connnection...\n\n");
 } 
 
 
@@ -281,25 +313,20 @@ void read_requesthdrs(rio_t * rp, char* existingHdrs, int* hasHost,
 {
 	printf("\nReading headers...\n");
 	char buf[MAXLINE];
+	buf[0] = '\0';
 	
 	while (strcmp(buf, "\r\n"))
 	{
-		printf("in while\n");
 		Rio_readlineb(rp, buf, MAXLINE);
-		printf("Header: %s\n", buf);
 		
 		if(strstr(buf, "Host")) {
 			*hasHost = 1;
-			printf("had host\n");
 		} else if (strstr(buf, "User-Agent")){
 			*hasUA = 1;
-			printf("had useragent\n");
 		} else if(strstr(buf, "Connection")){
 			*hasConn = 1;
-			printf("had connection\n");
 		} else if (strstr(buf, "Proxy-Connection")){
 			*hasPro = 1;
-			printf("had proxy connection\n");
 		}
 		
 		if(strstr(buf, "\r\n") == NULL){	
@@ -338,7 +365,7 @@ void get_filetype(char *filename, char *filetype)
 void clienterror(int fd, char *cause, char *errnum,
 	    char *shortmsg, char *longmsg)
 {
-	char		buf       [MAXLINE], body[MAXBUF];
+	char buf[MAXLINE], body[MAXBUF];
 
 	/* Build the HTTP response body */
 	sprintf(body, "<html><title>Tiny Error</title>");

@@ -254,6 +254,14 @@ do
         echo "   Success: Files are identical."
     else
         echo "   Failure: Files differ."
+		#echo ""
+		#echo ""
+		#echo "Mine"
+		#cat  ${PROXY_DIR}/${file}
+		#echo ""
+		#echo ""
+		#echo "Theirs"
+		#cat  ${NOPROXY_DIR}/${file}
     fi
 done
 
