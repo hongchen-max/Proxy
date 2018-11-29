@@ -13,12 +13,13 @@
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
 
-//sbuf stuff
+//thread queue stuff
 static sbuf_t queue;
 static const int nInQ = 2;
 
-//logging mutex
-sem_t logging;
+//Log queue, will have nInQ size
+static lbuf_t logQueue;
+
 
 void doit(int fd);
 void read_requesthdrs(rio_t * rp, char* existingHdrs, int* hasHost,
@@ -40,6 +41,18 @@ void* thread(void* vargp) {
 	return NULL;
 }
 
+//Logging thread
+void* log(void* vargp) {
+	Pthread_detach(pthread_self());
+	while(1) {
+		//get the latest message
+		
+		//write it to a file
+
+	}
+}
+
+
 
 int main(int argc, char **argv)
 {
@@ -55,12 +68,8 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-
-	//Initialize the queue
+	//Initialize the thread queue
 	sbuf_init(&queue, nInQ);
-
-	//Initialize logging mutex
-	Sem_init(&logging, 0, 1);
 	
 	//Make the thread pool
 	pthread_t tid;
@@ -68,6 +77,11 @@ int main(int argc, char **argv)
 		Pthread_create(&tid, NULL, thread, NULL);
 	}
 
+	//Initialize the logging queue
+	lbuf_init(&logQueue, nInQ);
+
+	//Make the logging thread
+	Pthread_create(&tid, NULL, log, NULL);
 	
 	//Opens a server on port argv[1]
 	listenfd = Open_listenfd(argv[1]);
@@ -150,11 +164,15 @@ void doit(int fd)
 		clienterror(fd, "bad url", "400", "bad url", "bad url");
 		return;
 	}
+
 	printf("\nsuccessfully parsed url\n");
 	printf("host: %s\n", host);
 	printf("port: %s\n", port);
 	printf("path: %s\n", path);
 
+	//log the threadid and message
+	
+	
 
 	//now read existing headers
 	//Tell me if there was already a host, ua, conn, proxy header
