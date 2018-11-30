@@ -24,10 +24,14 @@ typedef struct {
 int highestCount = 0;
 
 //number of objects allowed in our cache
-static const int NUM_OBJS = 10;
+static const int NUM_OBJS = MAX_CACHE_SIZE/MAX_OBJECT_SIZE;
 
 //Array of web response objects
 Response** cache;
+
+//reader writer cache mutex info
+int readcnt;
+sem_t mutex, w;
 
 //thread queue stuff
 static sbuf_t queue;
@@ -141,6 +145,11 @@ int main(int argc, char **argv)
 		memset(cache[i]->response, 0, MAX_OBJECT_SIZE);
 	}
 
+	//initialize the cache semaphores
+	Sem_init(&mutex, 0, 1);
+	Sem_init(&w, 0, 1);
+	readcnt = 0;
+
 	//Opens a server on port argv[1]
 	listenfd = Open_listenfd(argv[1]);
 	printf("Proxy listening on port %s\n", argv[1]);
@@ -234,6 +243,14 @@ void doit(int fd)
 	strcat(message, "\n");
 	lbuf_insert(&logQueue, message);		
 
+	//cache semaphore handling
+	P(&mutex);
+	readcnt++;
+	if(readcnt == 1){
+		P(&w);
+	}
+	V(&mutex);
+
 	//See if we have a cached version of the URI
 	for (int i = 0; i < NUM_OBJS; i++) {
 		if(strcmp(cache[i]->uri, uri) == 0){
@@ -245,6 +262,14 @@ void doit(int fd)
 			return;
 		}
 	}
+
+	//end semaphore handling
+	P(&mutex);
+	readcnt--;
+	if(readcnt == 0) {
+		V(&w);
+	}
+	V(&mutex);
 
 	//now read existing headers
 	//Tell me if there was already a host, ua, conn, proxy header
@@ -322,6 +347,9 @@ void doit(int fd)
 		
 	Close(clientfd);
 
+	//cache semaphore handling
+	P(&w);
+
 	//is it small enough to cache?
 	if(rspSize <= MAX_OBJECT_SIZE) {
 		//Find lru index
@@ -340,6 +368,10 @@ void doit(int fd)
 		strcpy(cache[lruIndex]->response, rsp);
 		cache[lruIndex]->size = rspSize;
 	}
+	
+	//end cache semaphore handling
+	V(&w);
+
 	Free(rsp);
 	printf("awaiting connnection...\n\n");
 } 
