@@ -7,7 +7,7 @@
 
 BYUNETID = pjohnst5
 VERSION = 1
-HANDINDIR = /users/faculty/snell/CS324/handin/Fall2018/ProxyLab1
+HANDINDIR = /users/faculty/snell/CS324/handin/Fall2018/ProxyLab2
 
 
 CC = gcc

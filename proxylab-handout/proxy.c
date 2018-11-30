@@ -13,6 +13,21 @@
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
+//Struct of web response object
+typedef struct {
+	char uri[MAXLINE];
+	char response[MAX_OBJECT_SIZE];
+	int size;
+	int count;
+} Response;
+
+int highestCount = 0;
+
+//number of objects allowed in our cache
+static const int NUM_OBJS = 10;
+
+//Array of web response objects
+Response** cache;
 
 //thread queue stuff
 static sbuf_t queue;
@@ -32,7 +47,7 @@ void get_filetype(char *filename, char *filetype);
 void clienterror(int fd, char *cause, char *errnum,
 	    	char *shortmsg, char *longmsg);
 
-
+//Server thread
 void* thread(void* vargp) {
 	Pthread_detach(pthread_self());
 	while(1) {
@@ -67,13 +82,16 @@ void sigint_handler(int sig) {
 	//deinitialize logging queue
 	lbuf_deinit(&logQueue);
 
-	fprintf(fp,"done\n");
+	//free the cache
+	for (int i = 0; i < NUM_OBJS; i++){
+		Free(cache[i]);
+	}
+	Free(cache);
+	
 	//close the file descriptor
 	fclose(fp);
 
-	FILE *why = fopen("./why.txt", "w+");
-	setbuf(why, NULL);
-	fprintf(why, "WHAT\n");
+	fprintf(stderr, "exiting...\n");
 	exit(1);
 }
 
@@ -112,7 +130,16 @@ int main(int argc, char **argv)
 	//Open the file to write to
 	fp = fopen("./log.txt", "w+"); 
 	setbuf(fp, NULL);
-	fprintf(fp, "Start\n");
+
+	//Make the cache array
+	cache = Calloc(NUM_OBJS, sizeof(Response*));
+	for (int i = 0; i < NUM_OBJS; i++) {
+		cache[i] = Calloc(1, sizeof(Response));
+		cache[i]->count = 0;
+		cache[i]->size = 0;
+		memset(cache[i]->uri, 0, MAXLINE);
+		memset(cache[i]->response, 0, MAX_OBJECT_SIZE);
+	}
 
 	//Opens a server on port argv[1]
 	listenfd = Open_listenfd(argv[1]);
@@ -187,6 +214,7 @@ void doit(int fd)
 		return;
 	}
 
+	
 	//Parse URI from GET request, get hostname, port, and path
 	if(!parseURI(uri, host, port, path)) {
 		printf("bad url\n");
@@ -194,15 +222,9 @@ void doit(int fd)
 		return;
 	}
 
-	printf("\nsuccessfully parsed url\n");
-	printf("host: %s\n", host);
-	printf("port: %s\n", port);
-	printf("path: %s\n", path);
-
-	//log the threadid and message
+	//log the thread message
 	char message[MAXLINE];
 	memset(message, 0, MAXLINE);
-	
 	strcat(message, "Thread handled: ");
 	strcat(message, host);
 	strcat(message, " ");
@@ -210,9 +232,19 @@ void doit(int fd)
 	strcat(message, " ");
 	strcat(message, path);
 	strcat(message, "\n");
-
 	lbuf_insert(&logQueue, message);		
-	
+
+	//See if we have a cached version of the URI
+	for (int i = 0; i < NUM_OBJS; i++) {
+		if(strcmp(cache[i]->uri, uri) == 0){
+			//Matching uri found, return it
+			Rio_writen(fd, cache[i]->response, cache[i]->size);	
+			//increment count of this object to be most recent
+			highestCount++;	
+			cache[i]->count = highestCount; 
+			return;
+		}
+	}
 
 	//now read existing headers
 	//Tell me if there was already a host, ua, conn, proxy header
@@ -269,19 +301,46 @@ void doit(int fd)
 	Rio_readinitb(&rio, clientfd);
 	Rio_writen(clientfd, finalRequest, strlen(finalRequest));
 	
-
 	//receive bytes back
 	char tmp[MAXLINE];
 	memset(tmp, 0, MAXLINE);
+	char *rsp = Calloc(MAX_OBJECT_SIZE, sizeof(char));
+	memset(rsp, 0, MAX_OBJECT_SIZE);
+	int rspSize = 0;
 	
 	int i = 0;
 	while((i = Rio_readnb(&rio, tmp, MAXLINE)) > 0) {
-		//concat line to response
-		//strcat(rsp, tmp);
+		//concat line to cache response while tracking size
+		rspSize = rspSize + i;
+		if(rspSize <= MAX_OBJECT_SIZE){
+			strcat(rsp, tmp);
+		}
+		
+		//write it to client
 		Rio_writen(fd, tmp, i);
 	}				
 		
 	Close(clientfd);
+
+	//is it small enough to cache?
+	if(rspSize <= MAX_OBJECT_SIZE) {
+		//Find lru index
+		int lowestCountFound = highestCount;
+		int lruIndex = 0;
+		for(int i = 0; i < NUM_OBJS; i++){
+			if(cache[i]->count < lowestCountFound){
+				lowestCountFound = cache[i]->count;
+				lruIndex = i;
+			}
+		}
+		//cache it
+		highestCount++;
+		cache[lruIndex]->count = highestCount;
+		strcpy(cache[lruIndex]->uri, uri);
+		strcpy(cache[lruIndex]->response, rsp);
+		cache[lruIndex]->size = rspSize;
+	}
+	Free(rsp);
 	printf("awaiting connnection...\n\n");
 } 
 
